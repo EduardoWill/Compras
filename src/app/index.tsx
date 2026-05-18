@@ -1,98 +1,188 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
+} from 'react-native';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import {
+  addDoc,
+  collection,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp // Melhor prática para datas no Firebase
+} from 'firebase/firestore';
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
+import { db } from '@/services/firebaseConfig';
+
+// Interface para garantir a tipagem correta dos dados
+interface ItemCompra {
+  id: string;
+  produto: string;
+  quantidade: string;
 }
 
 export default function HomeScreen() {
+  const [produto, setProduto] = useState('')
+  const [quantidade, setQuantidade] = useState('')
+  const [lista, setLista] = useState<ItemCompra[]>([])
+  const [loading, setLoading] = useState(true)
+
+  // Função para salvar no Firestore
+  async function adicionarProduto() {
+    if (produto.trim() === '' || quantidade.trim() === '') {
+      Alert.alert('Atenção', 'Preencha todos os campos!')
+      return
+    }
+
+    try {
+      await addDoc(collection(db, 'compras'), {
+        produto: produto,
+        quantidade: quantidade,
+        createdAt: serverTimestamp() 
+      })
+
+      setProduto('')
+      setQuantidade('')
+      // Não precisa chamar carregarProdutos() aqui, o onSnapshot faz isso sozinho!
+    } catch (error) {
+      console.error(error)
+      Alert.alert('Erro', 'Erro ao salvar no banco de dados.')
+    }
+  }
+
+  // Hook para buscar dados em tempo real
+  useEffect(() => {
+    const q = query(collection(db, 'compras'), orderBy('createdAt', 'desc'))
+
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const itens: ItemCompra[] = []
+      
+      querySnapshot.forEach((doc) => {
+        itens.push({
+          id: doc.id,
+          ...doc.data(),
+        } as ItemCompra)
+      })
+
+      setLista(itens)
+      setLoading(false)
+    }, (error) => {
+      console.error("Erro no Snapshot: ", error)
+      setLoading(false)
+    })
+
+    return () => unsubscribe()
+  }, [])
+
   return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
+    <SafeAreaView style={styles.container}>
+      <Text style={styles.title}>🛒 Lista de Compras</Text>
 
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
+      <TextInput
+        style={styles.input}
+        placeholder="Digite o produto"
+        placeholderTextColor="#888"
+        value={produto}
+        onChangeText={setProduto}
+      />
 
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
+      <TextInput
+        style={styles.input}
+        placeholder="Digite a quantidade"
+        placeholderTextColor="#888"
+        value={quantidade}
+        onChangeText={setQuantidade}
+        keyboardType="numeric"
+      />
 
-        {Platform.OS === 'web' && <WebBadge />}
-      </SafeAreaView>
-    </ThemedView>
-  );
+      <TouchableOpacity style={styles.button} onPress={adicionarProduto}>
+        <Text style={styles.buttonText}>+ Adicionar</Text>
+      </TouchableOpacity>
+
+      {loading ? (
+        <ActivityIndicator size="large" color="#22C55E" style={{ marginTop: 20 }} />
+      ) : (
+        <FlatList
+          data={lista}
+          keyExtractor={(item) => item.id}
+          showsVerticalScrollIndicator={false}
+          renderItem={({ item }) => (
+            <View style={styles.card}>
+              <Text style={styles.productName}>🛍️ {item.produto}</Text>
+              <Text style={styles.quantity}>Quantidade: {item.quantidade}</Text>
+            </View>
+          )}
+          ListEmptyComponent={() => (
+            <Text style={styles.emptyText}>Nenhum produto cadastrado.</Text>
+          )}
+        />
+      )}
+    </SafeAreaView>
+  )
 }
 
+// O objeto styles que estava faltando:
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    flexDirection: 'row',
-  },
-  safeArea: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
-  },
-  heroSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
+    backgroundColor: '#121212',
+    padding: 20,
   },
   title: {
+    color: '#fff',
+    fontSize: 32,
+    fontWeight: 'bold',
+    marginTop: 40,
+    marginBottom: 30,
+  },
+  input: {
+    backgroundColor: '#1E1E1E',
+    color: '#fff',
+    padding: 15,
+    borderRadius: 12,
+    marginBottom: 15,
+    fontSize: 16,
+  },
+  button: {
+    backgroundColor: '#22C55E',
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginBottom: 25,
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  card: {
+    backgroundColor: '#1E1E1E',
+    padding: 18,
+    borderRadius: 14,
+    marginBottom: 15,
+  },
+  productName: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  quantity: {
+    color: '#BDBDBD',
+    fontSize: 15,
+    marginTop: 5,
+  },
+  emptyText: {
+    color: '#777',
     textAlign: 'center',
+    marginTop: 50,
+    fontSize: 16,
   },
-  code: {
-    textTransform: 'uppercase',
-  },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
-  },
-});
+})
