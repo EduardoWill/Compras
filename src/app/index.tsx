@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Platform,
   SafeAreaView,
   StyleSheet,
   Text,
@@ -14,10 +15,13 @@ import {
 import {
   addDoc,
   collection,
+  deleteDoc,
+  doc,
   onSnapshot,
   orderBy,
   query,
-  serverTimestamp // Melhor prática para datas no Firebase
+  serverTimestamp,
+  updateDoc // Melhor prática para datas no Firebase
 } from 'firebase/firestore';
 
 import { db } from '@/services/firebaseConfig';
@@ -34,8 +38,9 @@ export default function HomeScreen() {
   const [quantidade, setQuantidade] = useState('')
   const [lista, setLista] = useState<ItemCompra[]>([])
   const [loading, setLoading] = useState(true)
+  const [editingId, setEditingId] = useState<string | null>(null)
 
-  // Função para salvar no Firestore
+  // Função para salvar ou atualizar no Firestore
   async function adicionarProduto() {
     if (produto.trim() === '' || quantidade.trim() === '') {
       Alert.alert('Atenção', 'Preencha todos os campos!')
@@ -43,11 +48,19 @@ export default function HomeScreen() {
     }
 
     try {
-      await addDoc(collection(db, 'compras'), {
-        produto: produto,
-        quantidade: quantidade,
-        createdAt: serverTimestamp() 
-      })
+      if (editingId) {
+        await updateDoc(doc(db, 'compras', editingId), {
+          produto: produto,
+          quantidade: quantidade,
+        })
+        setEditingId(null)
+      } else {
+        await addDoc(collection(db, 'compras'), {
+          produto: produto,
+          quantidade: quantidade,
+          createdAt: serverTimestamp(),
+        })
+      }
 
       setProduto('')
       setQuantidade('')
@@ -58,6 +71,48 @@ export default function HomeScreen() {
     }
   }
 
+  function iniciarEdicao(item: ItemCompra) {
+    setProduto(item.produto)
+    setQuantidade(item.quantidade)
+    setEditingId(item.id)
+  }
+
+  function cancelarEdicao() {
+    setProduto('')
+    setQuantidade('')
+    setEditingId(null)
+  }
+
+  async function confirmarExcluirProduto(itemId: string) {
+    try {
+      await deleteDoc(doc(db, 'compras', itemId))
+      if (editingId === itemId) {
+        cancelarEdicao()
+      }
+    } catch (error) {
+      console.error(error)
+      Alert.alert('Erro', 'Erro ao excluir o produto.')
+    }
+  }
+
+  function excluirProduto(itemId: string) {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm('Deseja remover este produto?')) {
+        confirmarExcluirProduto(itemId)
+      }
+      return
+    }
+
+    Alert.alert('Excluir produto', 'Deseja remover este produto?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Excluir',
+        style: 'destructive',
+        onPress: () => confirmarExcluirProduto(itemId),
+      },
+    ])
+  }
+
   // Hook para buscar dados em tempo real
   useEffect(() => {
     const q = query(collection(db, 'compras'), orderBy('createdAt', 'desc'))
@@ -65,10 +120,10 @@ export default function HomeScreen() {
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const itens: ItemCompra[] = []
       
-      querySnapshot.forEach((doc) => {
+      querySnapshot.forEach((snapshotDoc) => {
         itens.push({
-          id: doc.id,
-          ...doc.data(),
+          id: snapshotDoc.id,
+          ...snapshotDoc.data(),
         } as ItemCompra)
       })
 
@@ -101,11 +156,18 @@ export default function HomeScreen() {
         value={quantidade}
         onChangeText={setQuantidade}
         keyboardType="numeric"
+        maxLength={2}
       />
 
       <TouchableOpacity style={styles.button} onPress={adicionarProduto}>
-        <Text style={styles.buttonText}>+ Adicionar</Text>
+        <Text style={styles.buttonText}>{editingId ? 'Atualizar' : '+ Adicionar'}</Text>
       </TouchableOpacity>
+
+      {editingId ? (
+        <TouchableOpacity style={[styles.button, styles.cancelButton]} onPress={cancelarEdicao}>
+          <Text style={styles.buttonText}>Cancelar</Text>
+        </TouchableOpacity>
+      ) : null}
 
       {loading ? (
         <ActivityIndicator size="large" color="#22C55E" style={{ marginTop: 20 }} />
@@ -118,6 +180,14 @@ export default function HomeScreen() {
             <View style={styles.card}>
               <Text style={styles.productName}>🛍️ {item.produto}</Text>
               <Text style={styles.quantity}>Quantidade: {item.quantidade}</Text>
+              <View style={styles.cardActions}>
+                <TouchableOpacity style={[styles.actionButton, styles.editButton]} onPress={() => iniciarEdicao(item)}>
+                  <Text style={styles.actionButtonText}>Editar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.actionButton, styles.deleteButton]} onPress={() => excluirProduto(item.id)}>
+                  <Text style={styles.actionButtonText}>Excluir</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           )}
           ListEmptyComponent={() => (
@@ -178,6 +248,30 @@ const styles = StyleSheet.create({
     color: '#BDBDBD',
     fontSize: 15,
     marginTop: 5,
+  },
+  cardActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 12,
+  },
+  actionButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    marginLeft: 10,
+  },
+  editButton: {
+    backgroundColor: '#2563EB',
+  },
+  deleteButton: {
+    backgroundColor: '#DC2626',
+  },
+  cancelButton: {
+    backgroundColor: '#9CA3AF',
+  },
+  actionButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
   },
   emptyText: {
     color: '#777',
